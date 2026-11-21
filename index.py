@@ -1,4 +1,4 @@
-"""Pulse API - Vercel Python serverless function.
+"""FITLOG - personal fitness and nutrition tracker for Vercel.
 
 Stateless: it never stores personal data. The browser keeps everything in
 LocalStorage and calls this endpoint for calculations and the food database.
@@ -10,8 +10,9 @@ LocalStorage and calls this endpoint for calculations and the food database.
   POST /api/index?action=calories   MET-based exercise calorie estimate
 """
 import json
-from http.server import BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from pathlib import Path
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 
 # MET values (approximate, based on the Compendium of Physical Activities).
 ACTIVITIES = {
@@ -154,7 +155,7 @@ PAGE = r"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0c0d0f">
-<title>Pulse - Fitness &amp; Nutrition Tracker</title>
+<title>FITLOG - Fitness &amp; Nutrition Tracker</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap" rel="stylesheet">
@@ -291,7 +292,7 @@ function readProfile(form) {
   const num = (n, lo, hi, label) => { const v = N(g(n)); if (!(v >= lo && v <= hi)) throw new Error(`${label} must be between ${lo} and ${hi}`); return v; };
   return { name: g('name').trim(), age: num('age', 10, 100, 'Age'), gender: g('gender'), height: num('height', 100, 250, 'Height'), weight: num('weight', 25, 300, 'Current weight'), target: num('target', 25, 300, 'Target weight'), goal: g('goal'), activity: g('activity'), sessions: num('sessions', 0, 14, 'Gym sessions') };
 }
-const setupHTML = () => `<div class="setup"><h1>Welcome to <span class="acc">Pulse</span></h1><p class="mut" style="margin-bottom:1.2rem">Tell us a bit about you to set daily calorie and macro targets. Everything stays in this browser.</p>
+const setupHTML = () => `<div class="setup"><h1>Welcome to <span class="acc">FITLOG</span></h1><p class="mut" style="margin-bottom:1.2rem">Tell us a bit about you to set daily calorie and macro targets. Everything stays in this browser.</p>
 <form class="card" onsubmit="submitSetup(event)">${profileFields()}<p class="note">Targets are estimates (Mifflin-St Jeor equation), not medical measurements. You can edit them anytime.</p><button class="btn block">Create my plan</button></form></div>`;
 async function submitSetup(e) {
   e.preventDefault();
@@ -323,7 +324,7 @@ function render() {
   if (!S.profile) { root.innerHTML = setupHTML(); return; }
   if (!S.weights.length) upsertWeight(today(), S.profile.weight);
   const cur = PAGES[location.hash.slice(1)] ? location.hash.slice(1) : 'dashboard';
-  root.innerHTML = `<aside class="side"><div class="logo">Pulse<b>.</b></div>${NAV.map(([k, l]) => `<a href="#${k}" class="${k === cur ? 'on' : ''}">${ic(k)}${l}</a>`).join('')}</aside>
+  root.innerHTML = `<aside class="side"><div class="logo">FITLOG<b>.</b></div>${NAV.map(([k, l]) => `<a href="#${k}" class="${k === cur ? 'on' : ''}">${ic(k)}${l}</a>`).join('')}</aside>
 <main class="main" id="main"></main><nav class="bottom">${NAV.map(([k, , s]) => `<a href="#${k}" class="${k === cur ? 'on' : ''}">${ic(k)}${s}</a>`).join('')}</nav>`;
   PAGES[cur](); window.scrollTo(0, y);
 }
@@ -626,7 +627,7 @@ function saveTargets(e) {
 }
 async function recommendNow() { try { const t = await api('targets', S.profile); S.targets = { kcal: t.kcal, protein: t.protein, carbs: t.carbs, fat: t.fat }; save(); render(); toast('Recommended targets applied'); } catch (e) { toast(e.message, 1); } }
 function download(name, text, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
-function exportJSON() { download(`pulse-backup-${today()}.json`, JSON.stringify({ ...S, exportedAt: new Date().toISOString() }, null, 2), 'application/json'); toast('Backup downloaded'); }
+function exportJSON() { download(`fitlog-backup-${today()}.json`, JSON.stringify({ ...S, exportedAt: new Date().toISOString() }, null, 2), 'application/json'); toast('Backup downloaded'); }
 function importJSON(inp) {
   const file = inp.files[0]; if (!file) return; const rd = new FileReader();
   rd.onload = () => {
@@ -645,7 +646,7 @@ function exportCSV(kind) {
     : kind === 'workouts' ? [['date', 'time', 'type', 'name', 'duration_min', 'distance_km', 'est_kcal', 'notes'], ...S.workouts.map(w => [w.date, w.time, w.type, w.name, w.duration, w.distance || '', R(w.kcal, 1), w.notes || ''])]
       : [['date', 'meal', 'food', 'grams', 'kcal', 'protein_g', 'carbs_g', 'fat_g'], ...S.foods.map(f => [f.date, f.meal, f.name, f.grams, f.kcal, f.protein, f.carbs, f.fat])];
   if (rows.length === 1) return toast('Nothing to export yet', 1);
-  download(`pulse-${kind}-${today()}.csv`, rows.map(r => r.map(q).join(',')).join('\n'), 'text/csv');
+  download(`fitlog-${kind}-${today()}.csv`, rows.map(r => r.map(q).join(',')).join('\n'), 'text/csv');
 }
 function resetAll() {
   if (!confirm('Delete ALL data? This cannot be undone. Export a backup first if unsure.')) return;
@@ -656,7 +657,7 @@ function resetAll() {
 (async function boot() {
   S = load(); applyTheme();
   try { [META, FOODS] = await Promise.all([api('meta'), api('foods').then(r => r.foods)]); }
-  catch (e) { $('#root').innerHTML = `<div class="center card"><h2>Can’t reach the Pulse API</h2><p class="mut">${esc(e.message)}</p><p class="mut small" style="margin-top:.6rem">Deploy to Vercel, or run <code>vercel dev</code> locally, so <code>/api/index</code> is available.</p></div>`; return; }
+  catch (e) { $('#root').innerHTML = `<div class="center card"><h2>Can’t reach the FITLOG API</h2><p class="mut">${esc(e.message)}</p><p class="mut small" style="margin-top:.6rem">Deploy to Vercel, or run <code>vercel dev</code> locally, so <code>/api/index</code> is available.</p></div>`; return; }
   window.addEventListener('hashchange', render); render();
 })();
 </script>
@@ -672,57 +673,46 @@ def meta():
     }
 
 
-class handler(BaseHTTPRequestHandler):
-    def _send(self, code, obj, cache="no-store"):
-        body = json.dumps(obj).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Cache-Control", cache)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+# FastAPI application detected automatically by Vercel from this root index.py.
+app = FastAPI(title="FITLOG API")
 
-    def _action(self):
-        q = parse_qs(urlparse(self.path).query)
-        return (q.get("action") or ["meta"])[0]
 
-    def do_GET(self):
-        try:
-            if "action=" not in self.path:
-                body = PAGE.encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Cache-Control", "no-cache")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-                return
-            a = self._action()
-            if a == "meta":
-                return self._send(200, meta(), "public, max-age=300")
-            if a == "foods":
-                return self._send(200, {"foods": load_foods()}, "public, max-age=300")
-            if a == "health":
-                return self._send(200, {"ok": True})
-            self._send(404, {"error": "Unknown action"})
-        except Exception as e:  # pragma: no cover
-            self._send(500, {"error": "Server error: %s" % e})
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    return HTMLResponse(PAGE, headers={"Cache-Control": "no-cache"})
 
-    def do_POST(self):
-        try:
-            n = int(self.headers.get("Content-Length") or 0)
-            if n > 20000:
-                return self._send(413, {"error": "Request too large"})
-            data = json.loads(self.rfile.read(n) or b"{}")
-            if not isinstance(data, dict):
-                raise ValueError("Body must be a JSON object")
-            a = self._action()
-            if a == "targets":
-                return self._send(200, calc_targets(data))
-            if a == "calories":
-                return self._send(200, calc_calories(data))
-            self._send(404, {"error": "Unknown action"})
-        except (ValueError, json.JSONDecodeError) as e:
-            self._send(400, {"error": str(e)})
-        except Exception as e:  # pragma: no cover
-            self._send(500, {"error": "Server error: %s" % e})
+
+@app.get("/style.css")
+async def stylesheet():
+    css_path = Path(__file__).with_name("style.css")
+    if not css_path.is_file():
+        return JSONResponse({"error": "style.css was not found"}, status_code=404)
+    return FileResponse(css_path, media_type="text/css", headers={"Cache-Control": "public, max-age=300"})
+
+
+@app.get("/api/index")
+async def get_api(action: str = "meta"):
+    if action == "meta":
+        return JSONResponse(meta(), headers={"Cache-Control": "public, max-age=300"})
+    if action == "foods":
+        return JSONResponse({"foods": load_foods()}, headers={"Cache-Control": "public, max-age=300"})
+    if action == "health":
+        return {"ok": True}
+    return JSONResponse({"error": "Unknown action"}, status_code=404)
+
+
+@app.post("/api/index")
+async def post_api(request: Request, action: str = ""):
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            return JSONResponse({"error": "Body must be a JSON object"}, status_code=400)
+        if action == "targets":
+            return calc_targets(data)
+        if action == "calories":
+            return calc_calories(data)
+        return JSONResponse({"error": "Unknown action"}, status_code=404)
+    except (ValueError, TypeError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception:
+        return JSONResponse({"error": "Invalid request or internal server error"}, status_code=400)
